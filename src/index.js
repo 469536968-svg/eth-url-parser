@@ -16,7 +16,10 @@ export function parse(uri) {
         throw new Error('uri must be a string');
     }
 
-    if (uri.substring(0, 9) !== 'ethereum:') {
+    // RFC 3986 §3.1: URI schemes are case-insensitive. `Ethereum:` and
+    // `ETHEREUM:` are the same scheme as `ethereum:`. The previous strict
+    // comparison rejected them as "Not an Ethereum URI".
+    if (uri.substring(0, 9).toLowerCase() !== 'ethereum:') {
         throw new Error('Not an Ethereum URI');
     }
 
@@ -43,7 +46,7 @@ export function parse(uri) {
 
     const full_regex = '^ethereum:(' + prefix + '-)?'+address_regex + '\\@?([\\w]*)*\\/?([\\w]*)*';
 
-    const exp = new RegExp(full_regex);
+    const exp = new RegExp(full_regex, 'i');
     const data = uri.match(exp);
     if(!data) {
         throw new Error('Couldn not parse the url');
@@ -74,10 +77,25 @@ export function parse(uri) {
         obj.parameters = params;
         const amountKey = obj.function_name === 'transfer' ? 'uint256' : 'value';
 
-        if(obj.parameters[amountKey]) {
-            obj.parameters[amountKey] = new BigNumber(obj.parameters[amountKey], 10).toString();
-            if (!isFinite(obj.parameters[amountKey])) throw new Error('Invalid amount')
-            if (obj.parameters[amountKey] < 0) throw new Error('Invalid amount')
+        if(typeof obj.parameters[amountKey] !== 'undefined' && obj.parameters[amountKey] !== '' && obj.parameters[amountKey] !== null) {
+            const raw = String(obj.parameters[amountKey]).trim();
+
+            // EIP-681 explicitly permits scientific notation for the amount
+            // (`1e16`). This library's own build() emits exactly that form, so
+            // constructing the BigNumber with an explicit base 10 made
+            // parse(build(x)) throw "Not a base 10 number: 1e16" for every
+            // amount >= 1e16 wei (0.01 ETH) and every uint256 written that way.
+            // Validate the decimal/scientific grammar ourselves, then let
+            // BigNumber auto-detect the base.
+            if(!/^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/.test(raw)) {
+                throw new Error('Invalid amount');
+            }
+
+            const amount = new BigNumber(raw);
+            if(!amount.isFinite()) throw new Error('Invalid amount');
+            if(amount.isNegative()) throw new Error('Invalid amount');
+
+            obj.parameters[amountKey] = amount.toString();
         }
     }
 
@@ -86,6 +104,7 @@ export function parse(uri) {
 
 /**
  * Builds a valid Ethereum URI based on the initial parameters
+ *
  * @param  {object} data
  *
  * @return {string}
@@ -99,9 +118,14 @@ export function build({ prefix = null, target_address, chain_id = null, function
             // This is weird. Scientific notation in JS is usually 2.014e+18
             // but the EIP 681 shows no "+" sign ¯\_(ツ)_/¯
             // source: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-681.md#semantics
-            parameters[amountKey] = new BigNumber(parameters[amountKey], 10).toExponential().replace('+','').replace('e0','');
-            if (!isFinite(parameters[amountKey])) throw new Error('Invalid amount');
-            if (parameters[amountKey] < 0) throw new Error('Invalid amount');
+            //
+            // Same base-10 trap as in parse(): BigNumber must be given no base
+            // so that an input already in scientific notation (`1e16`) is
+            // accepted rather than thrown on.
+            const amount = new BigNumber(String(parameters[amountKey]).trim());
+            if (!amount.isFinite()) throw new Error('Invalid amount');
+            if (amount.isNegative()) throw new Error('Invalid amount');
+            parameters[amountKey] = amount.toExponential().replace('+','').replace('e0','');
         }
         query = qs.stringify(parameters);
     }
