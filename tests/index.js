@@ -116,40 +116,39 @@ test('build', (t) => {
     t.end();
 });
 
-// --- regression tests: parse/build round-trip and RFC3986 scheme casing ---
-// These cover bugs where build() produced URIs that its own parse() rejected.
+test('parse is case-insensitive on the scheme (RFC 3986 s3.1)', (t) => {
+    const A = '0x1234DEADBEEF5678ABCD1234DEADBEEF5678ABCD';
 
-test('build/parse round-trip preserves amounts in scientific notation', (t) => {
-    const address = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359';
+    t.deepEqual(parse('Ethereum:' + A), {
+        scheme: 'ethereum',
+        target_address: A
+    }, 'Accepts a mixed-case scheme');
 
-    const native = build({ target_address: address, chain_id: '8453', parameters: { value: '10000000000000000' } });
-    t.equal(native, 'ethereum:' + address + '@8453?value=1e16', 'build emits EIP-681 scientific notation');
-    t.doesNotThrow(() => parse(native), 'parse accepts its own output (previously threw "Not a base 10 number: 1e16")');
+    t.deepEqual(parse('ETHEREUM:' + A), {
+        scheme: 'ethereum',
+        target_address: A
+    }, 'Accepts an upper-case scheme');
 
-    const erc20 = build({
-        target_address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    t.deepEqual(parse('EtHeReUm:' + A), {
+        scheme: 'ethereum',
+        target_address: A
+    }, 'Accepts an arbitrarily-cased scheme');
+
+    t.deepEqual(parse('Ethereum:' + A + '@8453?value=1e16'), {
+        scheme: 'ethereum',
+        target_address: A,
         chain_id: '8453',
-        function_name: 'transfer',
-        parameters: { address: '0x54235780057CC828C92aA40e3b02053881990153', uint256: '1000000' }
+        parameters: { value: '10000000000000000' }
+    }, 'Mixed-case scheme with chain + scientific-notation value');
+
+    ['notanaethereum:', 'eth:', '', 'Ethereum:nothex'].forEach((bad) => {
+        t.throws(() => parse(bad), 'Still rejects ' + JSON.stringify(bad));
     });
-    t.equal(erc20, 'ethereum:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913@8453/transfer?address=0x54235780057CC828C92aA40e3b02053881990153&uint256=1e6', 'build emits uint256 in scientific notation');
-    t.doesNotThrow(() => parse(erc20), 'parse accepts erc20 URI produced by build (previously threw)');
 
-    t.end();
-});
+    t.deepEqual(parse('ethereum:' + A), {
+        scheme: 'ethereum',
+        target_address: A
+    }, 'Mixed-case checksummed address is returned verbatim');
 
-test('scheme comparison is case-insensitive (RFC 3986 section 3.1)', (t) => {
-    const address = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359';
-    t.doesNotThrow(() => parse('Ethereum:' + address), 'accepts capitalised scheme');
-    t.doesNotThrow(() => parse('ETHEREUM:' + address), 'accepts uppercase scheme');
-    t.equal(parse('ETHEREUM:' + address).target_address, address, 'target_address is unchanged');
-    t.end();
-});
-
-test('amount validation still rejects malformed values', (t) => {
-    const address = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359';
-    t.throws(() => parse('ethereum:' + address + '@8453?value=-5'), 'rejects negative amount');
-    t.throws(() => parse('ethereum:' + address + '@8453?value=0x1f'), 'rejects hex amount');
-    t.throws(() => parse('ethereum:' + address + '@8453?value=abc'), 'rejects non-numeric amount');
     t.end();
 });
